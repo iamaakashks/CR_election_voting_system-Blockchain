@@ -23,6 +23,42 @@ const castVoteOnBlockchain = async (candidateId) => {
     }
 };
 
+const startElection = async (req, res) => {
+    try {
+        const election = await Election.findById(req.params.id);
+
+        if (!election) {
+            return res.status(404).json({ message: 'Election not found' });
+        }
+        if (election.status !== 'Pending') {
+            return res.status(400).json({ message: 'Election has already been started or completed.' });
+        }
+        if (election.candidates.length < 2 || election.candidates.length > 3) {
+            return res.status(400).json({ message: 'Election must have between 2 and 3 candidates to start.' });
+        }
+
+        // Set the 15 minute timer
+        election.status = 'Active';
+        election.startTime = new Date();
+        election.endTime = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes from now
+
+        const updatedElection = await election.save();
+        res.json(updatedElection);
+
+    } catch (error) {
+        res.status(500).json({ message: 'Server Error', error: error.message });
+    }
+};
+
+const getAllElections = async (req, res) => {
+    try {
+        const elections = await Election.find({}).sort({ createdAt: -1 });
+        res.json(elections);
+    } catch (error) {
+        res.status(500).json({ message: 'Server Error', error: error.message });
+    }
+};
+
 // @desc    Create a new election
 // @route   POST /api/elections
 // @access  Private (Admins only)
@@ -96,10 +132,101 @@ const getMySectionElections = async (req, res) => {
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
+const getElectionById = async (req, res) => {
+    try {
+        let election = await Election.findById(req.params.id).populate('candidates.user', 'name collegeId');
+        
+        if (!election) {
+            return res.status(404).json({ message: 'Election not found' });
+        }
+
+        // Auto-complete logic: If the election is Active and the end time has passed
+        if (election.status === 'Active' && new Date() > new Date(election.endTime)) {
+            election.status = 'Completed';
+            election = await election.save();
+            // Re-populate after saving
+            election = await Election.findById(req.params.id).populate('candidates.user', 'name collegeId');
+        }
+        
+        res.json(election);
+    } catch (error) {
+        res.status(500).json({ message: 'Server Error', error: error.message });
+    }
+};
+
+const getElectionResults = async (req, res) => {
+    try {
+        const election = await Election.findById(req.params.id).populate('candidates.user', 'name collegeId');
+        if (!election) {
+            return res.status(404).json({ message: 'Election not found' });
+        }
+        if (election.status !== 'Completed') {
+            return res.status(400).json({ message: 'Election is not yet completed.' });
+        }
+
+        // --- Fetch results from the blockchain for verification ---
+        const provider = new ethers.JsonRpcProvider(process.env.GANACHE_RPC_URL);
+        const electionContract = new ethers.Contract(process.env.CONTRACT_ADDRESS, contractABI, provider);
+        
+        const blockchainResults = [];
+        for (let i = 0; i < election.candidates.length; i++) {
+            const contractCandidateId = i + 1;
+            const candidateData = await electionContract.candidates(contractCandidateId);
+            // The vote count is the third element in the returned struct array
+            blockchainResults.push({ 
+                id: election.candidates[i].user._id, 
+                name: candidateData.name,
+                votes: Number(candidateData.voteCount) 
+            });
+        }
+        
+        res.json({
+            electionDetails: election,
+            blockchainResults: blockchainResults,
+        });
+
+    } catch (error) {
+        res.status(500).json({ message: 'Server Error', error: error.message });
+    }
+};
+
+// @desc    Get the winner of the most recently completed election
+// @route   GET /api/elections/latest-winner
+// @access  Public
+const getLatestWinner = async (req, res) => {
+    try {
+        const latestCompletedElection = await Election.findOne({ status: 'Completed' })
+            .sort({ endTime: -1 }) // Get the most recent one
+            .populate('candidates.user', 'name');
+        
+        if (!latestCompletedElection || latestCompletedElection.candidates.length === 0) {
+            return res.json({ message: 'No completed elections found.' });
+        }
+
+        // Find the candidate with the most votes
+        const winner = latestCompletedElection.candidates.reduce(
+            (prev, current) => (prev.votes > current.votes) ? prev : current
+        );
+
+        res.json({
+            electionTitle: latestCompletedElection.title,
+            department: latestCompletedElection.department,
+            section: latestCompletedElection.section,
+            winnerName: winner.user.name,
+        });
+    } catch (error) {
+        res.status(500).json({ message: 'Server Error' });
+    }
+};
 
 module.exports = {
+    getAllElections, // Export the new function
     createElection,
     addCandidateToElection,
     castVote,
     getMySectionElections,
+    startElection,
+    getElectionById,
+    getElectionResults,
+    getLatestWinner
 };

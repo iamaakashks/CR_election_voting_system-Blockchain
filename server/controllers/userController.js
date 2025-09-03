@@ -84,4 +84,33 @@ const loginUser = async (req, res) => {
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
-module.exports = { registerUser, loginUser, getUserProfile };
+
+const searchUsers = async (req, res) => {
+    const { department, section, query } = req.query;
+    if (!department || !section) {
+        return res.status(400).json({ message: 'Department and section are required.' });
+    }
+
+    const keyword = query
+        ? {
+              $or: [
+                  { name: { $regex: query, $options: 'i' } }, // Case-insensitive search
+                  { collegeId: { $regex: query, $options: 'i' } },
+              ],
+          }
+        : {};
+
+    try {
+        const users = await User.find({
+            ...keyword,
+            department,
+            section,
+            role: 'Student',
+        }).select('_id name collegeId'); // Only send necessary data
+
+        res.json(users);
+    } catch (error) {
+        res.status(500).json({ message: 'Server Error', error: error.message });
+    }
+};
+module.exports = { registerUser, loginUser, getUserProfile, searchUsers };
