@@ -1,19 +1,14 @@
 const hre = require("hardhat");
 
 async function main() {
-  const electionName = "CR Election Fall 2025 (Blockchain)";
-  const candidateNames = ["Priya Sharma", "Rohan Verma"]; // Initial candidates
+  console.log("Deploying the master VeriVote contract...");
 
-  console.log("Deploying contract with the following details:");
-  console.log("Election Name:", electionName);
-  console.log("Candidates:", candidateNames.join(', '));
+  const VeriVote = await hre.ethers.getContractFactory("VeriVote"); // Make sure the name matches
+  const veriVote = await VeriVote.deploy();
 
-  const Election = await hre.ethers.getContractFactory("Election");
-  const election = await Election.deploy(electionName, candidateNames);
+  await veriVote.waitForDeployment();
 
-  await election.waitForDeployment();
-
-  console.log(`Election contract deployed to: ${election.target}`);
+  console.log(`Master VeriVote contract deployed to: ${veriVote.target}`);
 }
 
 main().catch((error) => {
